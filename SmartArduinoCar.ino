@@ -10,8 +10,8 @@ int longest = -1; //记录最远的距离
 
 typedef enum {LEFT = -1, FORWARD, RIGHT} Direction;
 
-#define Trig 11
-#define Echo 12
+#define Trig A4
+#define Echo A3
 
 ///
 
@@ -121,18 +121,19 @@ void setup_WIFI() {
 //  Serial.print("AT+RST\r\n");
 }
 //主循环
+int auto_flag = 0;
 void loop() {
    if (Serial.available() > 0) {
     String str = Serial.readStringUntil('\n');
 //    Serial.println("--->" + str);
     String cmd = str.substring(str.indexOf(":") + 1);
     
-    if      (cmd == "left") {  move_left();  Serial.println("left");}
-    else if (cmd == "right") { move_right(); Serial.println("right");}
-    else if (cmd == "from") {  move_front(); Serial.println("front");}
-    else if (cmd == "back") {  move_back(); Serial.println("back");}
-    else if (cmd == "stop") { stop(); }
-    else if (cmd == "auto") { auto_move(); }
+    if      (cmd == "left") {  auto_flag = 0; move_left();  Serial.println("left");}
+    else if (cmd == "right") { auto_flag = 0; move_right(); Serial.println("right");}
+    else if (cmd == "from") {  auto_flag = 0; move_front(); Serial.println("front");}
+    else if (cmd == "back") {  auto_flag = 0; move_back(); Serial.println("back");}
+    else if (cmd == "stop") {  auto_flag = 0; stop(); }
+    else if (cmd == "auto") {  auto_flag = 1; }
     else                    { 
       
       String subCmd = cmd.substring(0, cmd.indexOf(":") );
@@ -152,6 +153,7 @@ void loop() {
         digitalWrite(LED, LOW);
      }
   }
+  if (auto_flag) {auto_move();}
 }
 //方向控制
 void move_left() { 
@@ -236,11 +238,13 @@ void auto_move() {
 }
 
 void setup_sr04_servo() {
-  s.attach(A5);
+//  s.attach(A5); //舵机库和analogWrite共用同一个定时器,所以会产生干扰
+   pinMode(A5,OUTPUT);//设定舵机接口为输出接口
   pinMode(Trig, OUTPUT);
   pinMode(Echo, INPUT);
   last_pos = 90;
-  s.write(last_pos);
+  servopulse(last_pos);
+  //s.write(last_pos);
 }
 
 void send_trig_single() {
@@ -259,14 +263,16 @@ int direction() {
   send_trig_single();
   int dis = distance();
   Direction left_foward_right = FORWARD; // -1, 0, 1
-  
+  Serial.println(dis);
   if (dis <= 10) {
       Serial.println("Opps, turn");
       longest = dis;
       Serial.println(dis);
+      stop();
       //先向左找
       for (pos = last_pos; pos >= 0  ;  pos -= 10) {
-        s.write(pos); 
+        //s.write(pos);
+        servopulse(pos);
         delay(15);
         Serial.println(pos);
         send_trig_single();
@@ -280,7 +286,8 @@ int direction() {
       last_pos = pos;
       //再向右找
       for (pos = last_pos; pos <= 180  ;  pos += 10) {
-        s.write(pos); 
+//        s.write(pos);
+        servopulse(pos); 
         delay(15);
 
         send_trig_single();
@@ -297,5 +304,14 @@ int direction() {
   }
 
   return left_foward_right;
+}
+
+void servopulse(int angle)//定义一个脉冲函数
+{
+  int pulsewidth=(angle*11)+500;  //将角度转化为500-2480的脉宽值
+  digitalWrite(A5,HIGH);    //将舵机接口电平至高
+  delayMicroseconds(pulsewidth);  //延时脉宽值的微秒数
+  digitalWrite(A5,LOW);     //将舵机接口电平至低
+  delayMicroseconds(20000-pulsewidth);
 }
 
