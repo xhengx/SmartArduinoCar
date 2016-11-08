@@ -1,6 +1,19 @@
 #include <SoftwareSerial.h>
+#include <Servo.h>
 
-//SoftwareSerial esp(13, 12); //Rx, Tx
+// 自动壁障行驶
+Servo s;
+int pos = 0;
+int last_pos = 0;
+int n = 30;
+int longest = -1; //记录最远的距离
+
+typedef enum {LEFT = -1, FORWARD, RIGHT} Direction;
+
+#define Trig 11
+#define Echo 12
+
+///
 
 #define DEFAULT_SPEED 150
 #define MAX_SPEED     250
@@ -26,6 +39,7 @@ void setup() {
   pinMode(LED, OUTPUT);
   setup_WIFI();
   setup_wheel();
+  setup_sr04_servo();
   delay(1000);
 }
 
@@ -118,6 +132,7 @@ void loop() {
     else if (cmd == "from") {  move_front(); Serial.println("front");}
     else if (cmd == "back") {  move_back(); Serial.println("back");}
     else if (cmd == "stop") { stop(); }
+    else if (cmd == "auto") { auto_move(); }
     else                    { 
       
       String subCmd = cmd.substring(0, cmd.indexOf(":") );
@@ -201,4 +216,86 @@ void _move_front() {
   digitalWrite(w_right_back1, LOW);
 }
 
+void auto_move() {
+  int dic = direction();
+
+  switch (dic) {
+    case LEFT:
+//      Serial.println("转左");
+      move_left();
+      break;
+    case FORWARD:
+//      Serial.println("前行");
+      move_front();
+      break;
+    case RIGHT:
+//      Serial.println("转右");
+      move_right();
+      break;
+  }
+}
+
+void setup_sr04_servo() {
+  s.attach(A5);
+  pinMode(Trig, OUTPUT);
+  pinMode(Echo, INPUT);
+  last_pos = 90;
+  s.write(last_pos);
+}
+
+void send_trig_single() {
+  digitalWrite(Trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(Trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(Trig, LOW);
+}
+
+float distance() {
+  return pulseIn(Echo, HIGH) / 58.0;
+}
+
+int direction() {
+  send_trig_single();
+  int dis = distance();
+  Direction left_foward_right = FORWARD; // -1, 0, 1
+  
+  if (dis <= 10) {
+      Serial.println("Opps, turn");
+      longest = dis;
+      Serial.println(dis);
+      //先向左找
+      for (pos = last_pos; pos >= 0  ;  pos -= 10) {
+        s.write(pos); 
+        delay(15);
+        Serial.println(pos);
+        send_trig_single();
+        int left = distance();
+        if (left >= longest) {
+          longest = left;
+          left_foward_right = LEFT; //像左行
+          break;
+        }
+      }
+      last_pos = pos;
+      //再向右找
+      for (pos = last_pos; pos <= 180  ;  pos += 10) {
+        s.write(pos); 
+        delay(15);
+
+        send_trig_single();
+        int right = distance();
+        if (right >= longest) {
+          longest = right;
+          left_foward_right = RIGHT; //向右行
+          break;
+        }
+      }
+      last_pos = pos;
+      
+//      s.write(pos);                  
+  }
+
+  return left_foward_right;
+}
 
