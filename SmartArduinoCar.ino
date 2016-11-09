@@ -243,7 +243,7 @@ void setup_sr04_servo() {
   pinMode(Trig, OUTPUT);
   pinMode(Echo, INPUT);
   last_pos = 90;
-  servopulse(last_pos);
+  servo_run(last_pos);
   //s.write(last_pos);
 }
 
@@ -272,7 +272,7 @@ int direction() {
       //先向左找
       for (pos = last_pos; pos >= 0  ;  pos -= 10) {
         //s.write(pos);
-        servopulse(pos);
+        servo_run(pos);
         delay(15);
         Serial.println(pos);
         send_trig_single();
@@ -287,7 +287,7 @@ int direction() {
       //再向右找
       for (pos = last_pos; pos <= 180  ;  pos += 10) {
 //        s.write(pos);
-        servopulse(pos); 
+        servo_run(pos); 
         delay(15);
 
         send_trig_single();
@@ -304,6 +304,12 @@ int direction() {
   }
 
   return left_foward_right;
+}
+
+void servo_run(int ang) {
+  for (int i = 0; i < 50; ++i) {
+    servopulse(ang);
+  }
 }
 
 void servopulse(int angle)//定义一个脉冲函数
