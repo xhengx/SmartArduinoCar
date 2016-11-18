@@ -1,14 +1,17 @@
 #include <SoftwareSerial.h>
 #include <Servo.h>
+#include <pt.h>
+
 
 // 自动壁障行驶
 Servo s;
+int servo_pin = A5; //舵机
 int pos = 0;
 int last_pos = 0;
 int n = 30;
 int longest = -1; //记录最远的距离
 
-typedef enum {LEFT = -1, FORWARD, RIGHT} Direction;
+typedef enum {LEFT = -1, FORWARD, RIGHT, BACK} Direction;
 
 #define Trig A4
 #define Echo A3
@@ -31,15 +34,19 @@ int w_right_from0  = 5;  //pwm
 int w_right_from1  = 4;
 int  w_left_back0  = 6;  //pwm
 int  w_left_back1  = 7;
-int w_right_back0  = 9;  //pwm
+int w_right_back0  = 11;  //pwm,避开舵机库
 int w_right_back1  = 8;
 
+static struct pt auto_thread, read_thread, dic_thread;
 void setup() {
   // put your setup code here, to run once:
   pinMode(LED, OUTPUT);
   setup_WIFI();
   setup_wheel();
   setup_sr04_servo();
+  PT_INIT(&auto_thread);
+  PT_INIT(&read_thread);
+  PT_INIT(&dic_thread);
   delay(1000);
 }
 
@@ -111,19 +118,33 @@ void change_speed(int pin, int speed) {
 void setup_WIFI() {
   Serial.begin(115200);
   Serial.setTimeout(300);
-  //Serial.print("AT+CWSAP=\"xxcar\",\"1234567890\",5,3\r\n"); //设置密码
-  //Serial.print("AT+CIPMUX=0\r\n");
-  //AT+CIPSTART="UDP","192.168.4.1",8888,8889 //建立UDP监听, 8888为发送端口,8889为接收端口
+//  Serial.print("AT+CWSAP=\"xxcar1\",\"1234567890\",5,3\r\n"); //设置密码
+//  Serial.print("AT+CIPMUX=0\r\n");
+//  AT+CIPSTART="UDP","192.168.4.1",8888,8889 //建立UDP监听, 8888为发送端口,8889为接收端口
   //Serial.print("AT+CIPSERVER=1,8080\r\n");
   Serial.print("AT+CIPSTART=\"UDP\",\"192.168.4.1\",8888,8889\r\n");
   Serial.flush();
 //  Serial.print("AT+CIPSTO=0\r\n");
 //  Serial.print("AT+RST\r\n");
 }
-//主循环
 int auto_flag = 0;
-void loop() {
-   if (Serial.available() > 0) {
+
+static int auto_threadIMP(struct pt *pt)
+{
+  PT_BEGIN(pt);
+  while (1)
+  {
+    PT_WAIT_UNTIL(pt,auto_flag == 1);
+    auto_move();
+    PT_YIELD(pt); //Check the other events.
+  }
+  PT_END(pt);
+}
+static int read_threadIMP(struct pt *pt) 
+{
+  PT_BEGIN(pt);
+  while (1) {
+    PT_WAIT_UNTIL(pt, Serial.available());
     String str = Serial.readStringUntil('\n');
 //    Serial.println("--->" + str);
     String cmd = str.substring(str.indexOf(":") + 1);
@@ -131,17 +152,15 @@ void loop() {
     if      (cmd == "left") {  auto_flag = 0; move_left();  Serial.println("left");}
     else if (cmd == "right") { auto_flag = 0; move_right(); Serial.println("right");}
     else if (cmd == "from") {  auto_flag = 0; move_front(); Serial.println("front");}
-    else if (cmd == "back") {  auto_flag = 0; move_back(); Serial.println("back");}
-    else if (cmd == "stop") {  auto_flag = 0; stop(); }
-    else if (cmd == "auto") {  auto_flag = 1; }
+    else if (cmd == "back") {  auto_flag = 0; move_back();  Serial.println("back");}
+    else if (cmd == "stop") {  auto_flag = 0; stop();  }//default_speed(); }
+    else if (cmd == "auto") {  auto_flag = 1;       default_speed(); }
     else                    { 
       
       String subCmd = cmd.substring(0, cmd.indexOf(":") );
       if (subCmd == "speed") {
          speed = cmd.substring(cmd.indexOf(":") + 1).toInt();
-         Serial.println(speed);
-          setup_current_speed();
-         
+         setup_current_speed();
       }
     }
     
@@ -153,7 +172,16 @@ void loop() {
         digitalWrite(LED, LOW);
      }
   }
-  if (auto_flag) {auto_move();}
+  PT_END(pt);
+}
+//主循环
+void loop() {
+  
+  read_threadIMP(&read_thread);
+  auto_threadIMP(&auto_thread);
+  dic_threadIMP(&dic_thread);
+ // delay(60);
+
 }
 //方向控制
 void move_left() { 
@@ -177,6 +205,7 @@ void move_front() {
     setup_current_speed();
     is_turn = 0;
   }
+
   _move_front();
   is_back = 0;
 }
@@ -217,34 +246,56 @@ void _move_front() {
   digitalWrite(w_right_back0, HIGH);
   digitalWrite(w_right_back1, LOW);
 }
-
+int dic = FORWARD; //方向
+static int dic_threadIMP(struct pt *pt)
+{
+  PT_BEGIN(pt);
+  while (1)
+  {
+    PT_WAIT_UNTIL(pt,auto_flag == 1);
+    dic = direction();
+    delay(30);
+    PT_YIELD(pt); //Check the other events.
+  }
+  PT_END(pt);
+}
 void auto_move() {
-  int dic = direction();
-
+  
+  
   switch (dic) {
     case LEFT:
-//      Serial.println("转左");
+      Serial.println("move left");
       move_left();
+      
       break;
     case FORWARD:
-//      Serial.println("前行");
+      Serial.println("goooo");
       move_front();
+      
       break;
     case RIGHT:
-//      Serial.println("转右");
+      Serial.println("move right");
       move_right();
+      
       break;
+    case BACK:
+       move_back();
+       Serial.println("baccck");
+       break;
   }
+  delay(100);
+  last_pos = 90;
+  servo_run(last_pos, servo_pin);
 }
 
 void setup_sr04_servo() {
-//  s.attach(A5); //舵机库和analogWrite共用同一个定时器,所以会产生干扰
-   pinMode(A5,OUTPUT);//设定舵机接口为输出接口
+//  s.attach(servo_pin); //舵机库和analogWrite共用同一个定时器,所以会产生干扰,尝试避开9,10接口
+  pinMode(A5,OUTPUT);//设定舵机接口为输出接口
   pinMode(Trig, OUTPUT);
   pinMode(Echo, INPUT);
   last_pos = 90;
-  servo_run(last_pos);
-  //s.write(last_pos);
+  servo_run(last_pos, servo_pin);
+//  s.write(last_pos);
 }
 
 void send_trig_single() {
@@ -258,66 +309,61 @@ void send_trig_single() {
 float distance() {
   return pulseIn(Echo, HIGH) / 58.0;
 }
-
+/*
+ * 方向检测
+ * 先判断是否要后退
+ * 然后再判断方向
+ * 
+ */
 int direction() {
   send_trig_single();
   int dis = distance();
   Direction left_foward_right = FORWARD; // -1, 0, 1
   Serial.println(dis);
-  if (dis <= 10) {
+  if (dis <= 50 || dis >= 1000) { stop(); return BACK; }
+  if (dis <= 100) {
       Serial.println("Opps, turn");
       longest = dis;
       Serial.println(dis);
       stop();
-      //先向左找
-      for (pos = last_pos; pos >= 0  ;  pos -= 10) {
-        //s.write(pos);
-        servo_run(pos);
-        delay(15);
-        Serial.println(pos);
-        send_trig_single();
-        int left = distance();
-        if (left >= longest) {
-          longest = left;
-          left_foward_right = LEFT; //像左行
-          break;
-        }
-      }
-      last_pos = pos;
-      //再向右找
-      for (pos = last_pos; pos <= 180  ;  pos += 10) {
-//        s.write(pos);
-        servo_run(pos); 
-        delay(15);
+      //先向右找
+      servo_run(45, servo_pin);
+      send_trig_single();
+      int right = distance();
 
-        send_trig_single();
-        int right = distance();
-        if (right >= longest) {
-          longest = right;
-          left_foward_right = RIGHT; //向右行
-          break;
-        }
+      delay(15);
+
+      servo_run(90 + 40, servo_pin);
+      send_trig_single();
+      int left = distance();
+
+      delay(15);
+      left_foward_right = right > left ? LEFT : RIGHT;
+
+      if (max(right, left) <= 50) {
+        left_foward_right = BACK;
       }
-      last_pos = pos;
       
-//      s.write(pos);                  
+              
   }
 
   return left_foward_right;
 }
 
-void servo_run(int ang) {
+void servo_run(int ang, int pin) {
   for (int i = 0; i < 50; ++i) {
-    servopulse(ang);
+    servopulse(ang, pin);
   }
+  delay(30);
 }
 
-void servopulse(int angle)//定义一个脉冲函数
+void servopulse(int angle, int pin)//定义一个脉冲函数
 {
   int pulsewidth=(angle*11)+500;  //将角度转化为500-2480的脉宽值
-  digitalWrite(A5,HIGH);    //将舵机接口电平至高
+  digitalWrite(pin,HIGH);    //将舵机接口电平至高
   delayMicroseconds(pulsewidth);  //延时脉宽值的微秒数
-  digitalWrite(A5,LOW);     //将舵机接口电平至低
-  delayMicroseconds(20000-pulsewidth);
+  digitalWrite(pin,LOW);     //将舵机接口电平至低
+//  delayMicroseconds(20000-pulsewidth);
+  delay(20-pulsewidth/1000);
 }
 
